@@ -61,6 +61,7 @@ void setDeadlocks(bool);
 void closeGroupPipes();
 
 /************************ POINT TO POINT FUNCTIONS ************************/
+MIMPI_Retcode Send(const void*, int, int, int);
 
 /************************ GROUP FUNCTIONS ************************/
 MIMPI_Retcode Barrier();

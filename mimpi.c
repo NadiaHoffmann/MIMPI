@@ -62,7 +62,15 @@ MIMPI_Retcode MIMPI_Send(
     int destination,
     int tag
 ) {
-    TODO
+    if (destination == my_no) {
+        return MIMPI_ERROR_ATTEMPTED_SELF_OP;
+    }
+
+    if (destination >= world || destination < 0) {
+        return MIMPI_ERROR_NO_SUCH_RANK;
+    }
+
+    return Send(data, count, destination, tag);
 }
 
 MIMPI_Retcode MIMPI_Recv(
@@ -72,6 +80,13 @@ MIMPI_Retcode MIMPI_Recv(
     int tag
 ) {
     TODO
+    if (source == my_no) {
+        return MIMPI_ERROR_ATTEMPTED_SELF_OP;
+    }
+
+    if (source >= world || source < 0) {
+        return MIMPI_ERROR_NO_SUCH_RANK;
+    }
 }
 
 MIMPI_Retcode MIMPI_Barrier() {
@@ -83,7 +98,7 @@ MIMPI_Retcode MIMPI_Bcast(
     int count,
     int root
 ) {
-    if (root >= world) {
+    if (root >= world || root < 0) {
         return MIMPI_ERROR_NO_SUCH_RANK;
     }
     return Bcast(data, count, root);
@@ -96,7 +111,7 @@ MIMPI_Retcode MIMPI_Reduce(
     MIMPI_Op op,
     int root
 ) {
-    if (root >= world) {
+    if (root >= world || root < 0) {
         return MIMPI_ERROR_NO_SUCH_RANK;
     }
     return Reduce(send_data, recv_data, count, op, root);
