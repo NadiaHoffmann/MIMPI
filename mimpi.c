@@ -75,7 +75,7 @@ MIMPI_Retcode MIMPI_Recv(
 }
 
 MIMPI_Retcode MIMPI_Barrier() {
-    return createBarrier();
+    return Barrier();
 }
 
 MIMPI_Retcode MIMPI_Bcast(
@@ -86,7 +86,7 @@ MIMPI_Retcode MIMPI_Bcast(
     if (root >= world) {
         return MIMPI_ERROR_NO_SUCH_RANK;
     }
-    return createBcast(data, count, root);
+    return Bcast(data, count, root);
 }
 
 MIMPI_Retcode MIMPI_Reduce(
@@ -99,5 +99,5 @@ MIMPI_Retcode MIMPI_Reduce(
     if (root >= world) {
         return MIMPI_ERROR_NO_SUCH_RANK;
     }
-    return createReduce(send_data, recv_data, count, op, root);
+    return Reduce(send_data, recv_data, count, op, root);
 }

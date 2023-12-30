@@ -63,8 +63,8 @@ void closeGroupPipes();
 /************************ POINT TO POINT FUNCTIONS ************************/
 
 /************************ GROUP FUNCTIONS ************************/
-MIMPI_Retcode createBarrier();
-MIMPI_Retcode createBcast(void*, int, int);
-MIMPI_Retcode createReduce(void const *, void*, int, MIMPI_Op, int);
+MIMPI_Retcode Barrier();
+MIMPI_Retcode Bcast(void*, int, int);
+MIMPI_Retcode Reduce(void const *, void*, int, MIMPI_Op, int);
 
 #endif // MIMPI_COMMON_H

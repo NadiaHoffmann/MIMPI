@@ -169,31 +169,33 @@ static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
     return res_tab;
 }
 
-void tryToSend(int fd, void* send_from, int count) {
+static bool tryToSend(int fd, void* send_from, int count) {
     int ret = chsend(fd, send_from, count);
     if (ret == -1) {
         if (errno == EPIPE) {
             closeGroupPipes();
-            pthread_exit((void *) MIMPI_ERROR_REMOTE_FINISHED);
+            return false;
         }
         ASSERT_SYS_OK(chsend(fd, send_from, count));
     }
+    return true;
 }
 
-void tryToReceive(int fd, void* save_to, int count) {
+static bool tryToReceive(int fd, void* save_to, int count) {
     int ret = chrecv(fd, save_to, count);
     if (ret == 0) {
         closeGroupPipes();
-        pthread_exit((void *) MIMPI_ERROR_REMOTE_FINISHED);
+        return false;
     }
     else if (ret < 0) {
         ASSERT_SYS_OK(chrecv(fd, save_to, count));
     }
+    return true;
 }
 
-// THREAD FUNCTIONS
+// EXTERN FUNCTIONS
 
-static void* Barrier(void* arg) {
+MIMPI_Retcode Barrier(void) {
     char to_send = '0';
     char* to_receive = malloc(sizeof(char));
     int me = my_rank + 1;
@@ -201,37 +203,45 @@ static void* Barrier(void* arg) {
     int right_child = 2 * me + 1;
 
     if (left_child < world_size + 1) {
-        tryToReceive((700 + 6 * me + 1 - 3), to_receive, sizeof(char));
+        if (!tryToReceive((700 + 6 * me + 1 - 3), to_receive, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (right_child < world_size + 1) {
-        tryToReceive((700 + 6 * me + 2 - 3), to_receive, sizeof(char));
+        if (!tryToReceive((700 + 6 * me + 2 - 3), to_receive, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (me != 1) {
-        tryToSend((700 + 6 * me + 0), &to_send, sizeof(char));
-        tryToReceive((700 + 6 * me + 0 - 3), to_receive, sizeof(char));
+        if (!tryToSend((700 + 6 * me + 0), &to_send, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
+
+        if(!tryToReceive((700 + 6 * me + 0 - 3), to_receive, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (left_child < world_size + 1) {
-        tryToSend((700 + 6 * me + 1), &to_send, sizeof(char));
+        if(!tryToSend((700 + 6 * me + 1), &to_send, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (right_child < world_size + 1) {
-        tryToSend((700 + 6 * me + 2), &to_send, sizeof(char));
+        if(!tryToSend((700 + 6 * me + 2), &to_send, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     free(to_receive);
 
-    pthread_exit((void *) MIMPI_SUCCESS);
+    return MIMPI_SUCCESS;
 }
 
-static void* Bcast(void* _args) {
-    Bcast_args *args = (Bcast_args *) _args;
-    int count = args -> count;
-    int root = args -> root;
-    void* data = args -> data;
-
+MIMPI_Retcode Bcast(void *data, int count, int root) {
     char to_send = '1';
     char* to_receive = malloc(sizeof(char));
     int me = my_rank + 1;
@@ -239,47 +249,62 @@ static void* Bcast(void* _args) {
     int right_child = 2 * me + 1;
 
     if (root == my_rank && me != 1) {
-        tryToSend((900 + 4 * me + 2), data, count);
+        if(!tryToSend((900 + 4 * me + 2), data, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (left_child < world_size + 1) {
-        tryToReceive((700 + 6 * me + 1 - 3), to_receive, sizeof(char));
+        if (!tryToReceive((700 + 6 * me + 1 - 3), to_receive, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (right_child < world_size + 1) {
-        tryToReceive((700 + 6 * me + 2 - 3), to_receive, sizeof(char));
+        if (!tryToReceive((700 + 6 * me + 2 - 3), to_receive, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (me == 1 && root != my_rank) {
-        tryToReceive((900 + 4 * (root + 1) + 1), data, count);   
+        if (!tryToReceive((900 + 4 * (root + 1) + 1), data, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }   
     }
 
     if (me != 1) {
-        tryToSend((700 + 6 * me + 0), &to_send, sizeof(char));
-        tryToReceive((700 + 6 * me + 0 - 3), data, count);
+        if(!tryToSend((700 + 6 * me + 0), &to_send, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
+        if (!tryToReceive((700 + 6 * me + 0 - 3), data, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (left_child < world_size + 1) {
-        tryToSend((700 + 6 * me + 1), data, count);
+        if(!tryToSend((700 + 6 * me + 1), data, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (right_child < world_size + 1) {
-        tryToSend((700 + 6 * me + 2), data, count);
+        if(!tryToSend((700 + 6 * me + 2), data, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     free(to_receive);
 
-    pthread_exit((void *) MIMPI_SUCCESS);
+    return MIMPI_SUCCESS;
 }
 
-static void* Reduce(void* _args) {
-    Reduce_args *args = (Reduce_args *) _args;
-    void const *send_data = args -> send_data;
-    void *recv_data = args -> recv_data;
-    int count = args -> count;
-    MIMPI_Op op = args -> op;
-    int root = args -> root;
-
+MIMPI_Retcode Reduce(
+    void const *send_data,
+    void *recv_data,
+    int count,
+    MIMPI_Op op,
+    int root
+) {
     char to_send = '2';
     char* to_receive = malloc(sizeof(char));
     void* tab1 = malloc(count);
@@ -291,7 +316,9 @@ static void* Reduce(void* _args) {
     int right_child = 2 * me + 1;
 
     if (left_child < world_size + 1) {
-        tryToReceive((700 + 6 * me + 1 - 3), tab1, count);
+        if (!tryToReceive((700 + 6 * me + 1 - 3), tab1, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
         mid_tab = reducer(tab1, send_data, count, op); 
     }
     else {
@@ -306,7 +333,9 @@ static void* Reduce(void* _args) {
     }
 
     if (right_child < world_size + 1) {
-        tryToReceive((700 + 6 * me + 2 - 3), tab2, count);
+        if (!tryToReceive((700 + 6 * me + 2 - 3), tab2, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
         res_tab = reducer(tab2, mid_tab, count, op);
     }
     else {
@@ -314,25 +343,37 @@ static void* Reduce(void* _args) {
     }
 
     if (me != 1) {
-        tryToSend((700 + 6 * me + 0), res_tab, count);
-        tryToReceive((700 + 6 * me + 0 - 3), to_receive, sizeof(char));
+        if(!tryToSend((700 + 6 * me + 0), res_tab, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
+        if (!tryToReceive((700 + 6 * me + 0 - 3), to_receive, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (left_child < world_size + 1) {
-        tryToSend((700 + 6 * me + 1), &to_send, sizeof(char));
+        if(!tryToSend((700 + 6 * me + 1), &to_send, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (right_child < world_size + 1) {
-        tryToSend((700 + 6 * me + 2), &to_send, sizeof(char));
+        if(!tryToSend((700 + 6 * me + 2), &to_send, sizeof(char))) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (me == 1 && my_rank != root) {
-        tryToSend((900 + 4 * (root + 1) + 0), res_tab, count);
+        if(!tryToSend((900 + 4 * (root + 1) + 0), res_tab, count)) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
     }
 
     if (my_rank == root) {
         if (me != 1) {
-            tryToReceive((900 + 4 * me + 3), recv_data, count);
+            if (!tryToReceive((900 + 4 * me + 3), recv_data, count)) {
+                return MIMPI_ERROR_REMOTE_FINISHED;
+            }
         }
         else {
             u_int8_t* placeholder = recv_data;
@@ -351,58 +392,5 @@ static void* Reduce(void* _args) {
     free(tab1);
     free(tab2);
 
-    pthread_exit((void *) MIMPI_SUCCESS);
-}
-
-// EXTERN FUNCTIONS
-
-MIMPI_Retcode createBarrier() {
-    pthread_t barrier;
-    void* ret = NULL;
-    ASSERT_ZERO(pthread_create(&barrier, NULL, Barrier, NULL));
-    pthread_join(barrier, &ret);
-
-    return (MIMPI_Retcode) ret;
-}
-
-MIMPI_Retcode createBcast(
-    void *data,
-    int count,
-    int root
-) {
-    pthread_t bcast;
-    Bcast_args *args = malloc(sizeof(Bcast_args));
-    args -> data = data;
-    args -> count = count;
-    args -> root = root;
-
-    void* ret = NULL;
-    ASSERT_ZERO(pthread_create(&bcast, NULL, Bcast, args));
-    pthread_join(bcast, &ret);
-
-    free(args);
-    return (MIMPI_Retcode) ret;
-}
-
-MIMPI_Retcode createReduce(
-    void const *send_data,
-    void *recv_data,
-    int count,
-    MIMPI_Op op,
-    int root
-) {
-    pthread_t reduce;
-    Reduce_args *args = malloc(sizeof(Reduce_args));
-    args -> send_data = send_data;
-    args -> recv_data = recv_data;
-    args -> count = count;
-    args -> op = op;
-    args -> root = root;
-
-    void* ret = NULL;
-    ASSERT_ZERO(pthread_create(&reduce, NULL, Reduce, args));
-    pthread_join(reduce, &ret);
-
-    free(args);
-    return (MIMPI_Retcode) ret;
+    return MIMPI_SUCCESS;
 }
