@@ -60,12 +60,19 @@ typedef struct {
     int root;
 } Reduce_args;
 
+typedef struct {
+    void* data;
+    int count;
+    int tag;
+} MIMPI_message;
+
 /************************ VARIABLES ************************/
 #define BUFFER_SIZE 4096
 static int my_rank = -1;
 static int world_size = 0;
 static bool deadlocks = false;
 static bool hasFinished[16] = {false};
+pthread_t readers[16];
 
 /************************ HELPER FUNCTIONS ************************/
 static ssize_t tryToSend(int fd, void* send_from, int count) {
@@ -117,10 +124,6 @@ void setDeadlocks(bool deadlock_detection) {
     deadlocks = deadlock_detection;
 }
 
-void createReaders() {
-    
-}
-
 /************************ FUNCTIONS FOR FINALIZE ************************/
 void closeGroupPipes() {
     for (int i = 0; i < 3; i++) {
@@ -142,7 +145,7 @@ void closeGroupPipes() {
 
 /************************ POINT TO POINT FUNCTIONS ************************/
 // THREADS
-void* Reader(void* _args) {
+static void* Reader(void* _args) {
     int readingFrom = *(int*) _args;
     free(_args);
 
@@ -187,12 +190,14 @@ void* Reader(void* _args) {
         }
 
         // i tu muszę puszczać wątek do zapisywania
+        MIMPI_message *to_save = malloc(sizeof(MIMPI_message));
+        
         free(buf);
     }
     pthread_exit(NULL);
 }
 
-void* Writer(void* _args) {
+static void* Writer(void* _args) {
 
 }
 
@@ -229,6 +234,13 @@ MIMPI_Retcode Send(const void* data, int count, int destination, int tag)
     }
 
     return MIMPI_SUCCESS;
+}
+
+void createReaders() {
+    for (int i = 0; i < world_size; i++) {
+        int j = i; // czy to się nie wyrąbie?
+        ASSERT_ZERO(pthread_create(&readers[i], NULL, Reader, &j));
+    }
 }
 
 /************************ GROUP FUNCTIONS ************************/
@@ -484,30 +496,75 @@ MIMPI_Retcode Reduce(
             free(to_receive);
             free(tab1);
             free(tab2);
-            free(res_tab);
-            // ale mid_tab być może tez trzeba :// how do i check that
+            if (res_tab == mid_tab) {
+                free(res_tab);
+            }
+            else {
+                free(res_tab);
+                free(mid_tab);
+            }
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
         if (tryToReceive((700 + 6 * me + 0 - 3), 
             to_receive, sizeof(char)) == -1) {
+                free(to_receive);     
+            free(tab1);
+            free(tab2);
+            if (res_tab == mid_tab) {
+                free(res_tab);
+            }
+            else {
+                free(res_tab);
+                free(mid_tab);
+            }
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (left_child < world_size + 1) {
         if(tryToSend((700 + 6 * me + 1), &to_send, sizeof(char)) == -1) {
+            free(to_receive);     
+            free(tab1);
+            free(tab2);
+            if (res_tab == mid_tab) {
+                free(res_tab);
+            }
+            else {
+                free(res_tab);
+                free(mid_tab);
+            }
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (right_child < world_size + 1) {
         if(tryToSend((700 + 6 * me + 2), &to_send, sizeof(char)) == -1) {
+            free(to_receive);     
+            free(tab1);
+            free(tab2);
+            if (res_tab == mid_tab) {
+                free(res_tab);
+            }
+            else {
+                free(res_tab);
+                free(mid_tab);
+            }
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (me == 1 && my_rank != root) {
         if(tryToSend((900 + 4 * (root + 1) + 0), res_tab, count) == -1) {
+            free(to_receive);     
+            free(tab1);
+            free(tab2);
+            if (res_tab == mid_tab) {
+                free(res_tab);
+            }
+            else {
+                free(res_tab);
+                free(mid_tab);
+            }
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
@@ -515,6 +572,16 @@ MIMPI_Retcode Reduce(
     if (my_rank == root) {
         if (me != 1) {
             if (tryToReceive((900 + 4 * me + 3), recv_data, count) == -1) {
+                free(to_receive);     
+                free(tab1);
+                free(tab2);
+                if (res_tab == mid_tab) {
+                    free(res_tab);
+                }
+                else {
+                    free(res_tab);
+                    free(mid_tab);
+                }
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
         }
@@ -530,10 +597,16 @@ MIMPI_Retcode Reduce(
         }
     }
 
-    free(to_receive);
-    free(mid_tab);      
+    free(to_receive);     
     free(tab1);
     free(tab2);
+    if (res_tab == mid_tab) {
+        free(res_tab);
+    }
+    else {
+        free(res_tab);
+        free(mid_tab);
+    }
 
     return MIMPI_SUCCESS;
 }
