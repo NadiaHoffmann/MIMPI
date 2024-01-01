@@ -63,8 +63,14 @@ typedef struct {
 typedef struct {
     void* data;
     int count;
+    int source;
     int tag;
 } MIMPI_message;
+
+typedef struct element {
+    MIMPI_message *message;
+    struct element *next;
+} messages_node;
 
 /************************ VARIABLES ************************/
 #define BUFFER_SIZE 4096
@@ -72,7 +78,12 @@ static int my_rank = -1;
 static int world_size = 0;
 static bool deadlocks = false;
 static bool hasFinished[16] = {false};
-pthread_t readers[16];
+static pthread_t readers[16];
+static messages_node* list[16];
+static pthread_mutex_t mutex_list[16];
+static MIMPI_message *waiting_for;
+static pthread_mutex_t waiting_for_mutex;
+
 
 /************************ HELPER FUNCTIONS ************************/
 static ssize_t tryToSend(int fd, void* send_from, int count) {
@@ -145,6 +156,7 @@ void closeGroupPipes() {
 
 /************************ POINT TO POINT FUNCTIONS ************************/
 // THREADS
+
 static void* Reader(void* _args) {
     int readingFrom = *(int*) _args;
     free(_args);
@@ -153,10 +165,8 @@ static void* Reader(void* _args) {
         int count;
         if (tryToReceive((20 * (my_rank + 1) + readingFrom), 
             &count, sizeof(int)) == -1) {
-            // huh co robić w tej sytuacji??? mogę zapisywać info, że ten się już skończył
-            // wtedy przy recv będę szukać odpowiedniej wiadomości, jeżeli jej nie ma a tamten się skończył
-            // to wywalam error
             hasFinished[readingFrom] = true;
+            // budzenie search, bo więcej nowych wiadomości nie będzie
             pthread_exit(NULL);
         }
 
@@ -169,11 +179,12 @@ static void* Reader(void* _args) {
                 (count - read_bytes);
 
             read = tryToReceive((20 * (my_rank + 1) + readingFrom), 
-                buf, to_read);
+                buf + read_bytes, to_read);
 
             if (read == -1) {
                 free(buf);
                 hasFinished[readingFrom] = true;
+                // budzenie search, bo więcej nowych wiadomości nie będzie
                 pthread_exit(NULL);
             }
 
@@ -186,19 +197,105 @@ static void* Reader(void* _args) {
             &tag, sizeof(int)) == -1) {
             free(buf);
             hasFinished[readingFrom] = true;
+            // budzenie search, bo więcej nowych wiadomości nie będzie
             pthread_exit(NULL);
         }
 
-        // i tu muszę puszczać wątek do zapisywania
         MIMPI_message *to_save = malloc(sizeof(MIMPI_message));
-        
-        free(buf);
+        to_save -> data = buf;
+        to_save -> count = count;
+        to_save -> source = readingFrom;
+        to_save -> tag = tag;
+
+        pthread_mutex_lock(&mutex_list[readingFrom]);
+        messages_node *temp = list[readingFrom];
+        while (temp -> next != NULL) {
+            temp = temp -> next;
+        }
+
+        messages_node *new_node = malloc(sizeof(messages_node));
+        temp -> next = new_node;
+        new_node -> message = to_save;
+        new_node -> next = NULL;
+
+        // budzenie Search, jeśli czeka
+        if (waiting_for -> count == count && 
+        (
+            waiting_for -> tag == MIMPI_ANY_TAG ||
+            waiting_for -> tag == tag
+        )) {
+
+        }
+
+        pthread_mutex_unlock(&mutex_list[readingFrom]);
     }
     pthread_exit(NULL);
 }
 
-static void* Writer(void* _args) {
+// HELPERS
+MIMPI_Retcode Search(void* data, int count, int source, int tag) {
+    bool found = false;
+    while (!found) {
+        if (hasFinished[source]) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
+        pthread_mutex_lock(&mutex_list[source]);
+        messages_node *before_temp = list[source];
+        messages_node *temp = list[source];
 
+        if (tag != MIMPI_ANY_TAG) {
+            while (temp -> next != NULL || (
+                temp -> message != NULL &&
+                temp -> message -> tag != tag &&
+                temp -> message -> count != count
+            )) {
+                before_temp = temp;
+                temp = temp -> next;
+            }
+
+            if (temp -> message == NULL || 
+                temp -> message -> tag != tag || 
+                temp -> message -> count != count
+            ) {
+                // nic nie ma, spanko i czekamy
+                waiting_for -> count = count;
+                waiting_for -> tag = tag;
+                // tu muszę zabrać mutexa
+                // i jeśli zostaliśmy obudzeni to a) proces wysyłający umarł
+                // b) ta wiadomość gdzieś, ale musimy do niej dojść
+            }
+            // może wywalić else?
+            else {
+                // trza usuwać node
+                return NULL;
+            }
+        }
+        else {
+            while (temp -> next != NULL || (
+                temp -> message != NULL &&
+                temp -> message -> count != count
+            )) {
+                before_temp = temp;
+                temp = temp -> next;
+            }
+
+            if (temp -> message == NULL || 
+                temp -> message -> count != count 
+            ) {
+                // nic nie ma, zapisujemy na co czekamy i czekamy
+                waiting_for -> count = count;
+                waiting_for -> tag = MIMPI_ANY_TAG;
+            }
+            else {
+                // trza usuwać node
+                return NULL;
+            }
+        }
+        
+        pthread_mutex_unlock(&mutex_list[source]);
+    }
+    
+    return MIMPI_SUCCESS;
 }
 
 // EXTERN FUNCTIONS
@@ -237,6 +334,18 @@ MIMPI_Retcode Send(const void* data, int count, int destination, int tag)
 }
 
 void createReaders() {
+    for (int i = 0; i < world_size; i++) {
+        messages_node *guard = malloc(sizeof(messages_node));
+        guard -> message = NULL;
+        guard -> next = NULL;
+
+        list[i] = guard; // pamiętać żeby to dealokować przy wychodzeniu
+
+        ASSERT_ZERO(pthread_mutex_init(&mutex_list[i], NULL));
+    }
+
+    ASSERT_ZERO(pthread_mutex_init(&waiting_for_mutex,NULL));
+
     for (int i = 0; i < world_size; i++) {
         int j = i; // czy to się nie wyrąbie?
         ASSERT_ZERO(pthread_create(&readers[i], NULL, Reader, &j));

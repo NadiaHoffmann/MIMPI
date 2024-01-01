@@ -87,6 +87,8 @@ MIMPI_Retcode MIMPI_Recv(
     if (source >= world || source < 0) {
         return MIMPI_ERROR_NO_SUCH_RANK;
     }
+
+   return Search(data, count, source, tag);
 }
 
 MIMPI_Retcode MIMPI_Barrier() {

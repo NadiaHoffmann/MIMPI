@@ -62,6 +62,7 @@ void closeGroupPipes();
 
 /************************ POINT TO POINT FUNCTIONS ************************/
 MIMPI_Retcode Send(const void*, int, int, int);
+MIMPI_Retcode Search(void*, int, int, int);
 
 /************************ GROUP FUNCTIONS ************************/
 MIMPI_Retcode Barrier();
