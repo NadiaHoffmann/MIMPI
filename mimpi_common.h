@@ -56,9 +56,12 @@ _Noreturn extern void fatal(const char* fmt, ...);
 void setMyRank(int);
 void setWorldSize(int);
 void setDeadlocks(bool);
+void createReaders();
 
 /************************ FUNCTIONS FOR FINALIZE ************************/
 void closeGroupPipes();
+void closePointToPointPipes();
+void killReaders();
 
 /************************ POINT TO POINT FUNCTIONS ************************/
 MIMPI_Retcode Send(const void*, int, int, int);

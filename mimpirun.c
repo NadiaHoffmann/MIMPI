@@ -52,6 +52,7 @@ int main(int argc, char **argv) {
                 ASSERT_SYS_OK(close(pipes[i][j][0]));
                 ASSERT_SYS_OK(dup2(pipes[i][j][1], (40 * (i + 1) + j)));
                 ASSERT_SYS_OK(close(pipes[i][j][1]));
+                // printf("%d <- %d\n", (20 * (2 * i + 1) + j), (40 * (i + 1) + j));
             }
         }
     }

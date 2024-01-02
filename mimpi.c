@@ -32,6 +32,7 @@ void MIMPI_Init(bool enable_deadlock_detection) {
     setMyRank(my_no);
     setWorldSize(world);
     setDeadlocks(enable_deadlock_detection);
+    createReaders();
     // TODO
 }
 
@@ -39,6 +40,10 @@ void MIMPI_Finalize() {
     // TODO
     // zamykać wszystkie pipy procesu, zabijać wszystkie threads
     closeGroupPipes();
+    closePointToPointPipes();
+    killReaders();
+
+    printf("me: %d\n", my_no);
 
     channels_finalize();
 }
@@ -62,6 +67,7 @@ MIMPI_Retcode MIMPI_Send(
     int destination,
     int tag
 ) {
+    printf("%d in send\n", my_no);
     if (destination == my_no) {
         return MIMPI_ERROR_ATTEMPTED_SELF_OP;
     }
@@ -79,7 +85,8 @@ MIMPI_Retcode MIMPI_Recv(
     int source,
     int tag
 ) {
-    TODO
+    //TODO
+    printf("%d in recv\n", my_no);
     if (source == my_no) {
         return MIMPI_ERROR_ATTEMPTED_SELF_OP;
     }
@@ -92,6 +99,7 @@ MIMPI_Retcode MIMPI_Recv(
 }
 
 MIMPI_Retcode MIMPI_Barrier() {
+    printf("%d in Barrier\n", my_no);
     return Barrier();
 }
 
