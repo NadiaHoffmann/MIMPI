@@ -77,19 +77,19 @@ typedef struct element {
 static int my_rank = -1;
 static int world_size = 0;
 static bool deadlocks = false;
-static bool has_finished[16] = {false};
+static volatile bool has_finished[16] = {false};
 static pthread_mutex_t has_finished_mutex[16];
 static pthread_t readers[16];
 static messages_node* list[16];
 static pthread_mutex_t mutex_list[16];
 static MIMPI_message *waiting_for;
 static pthread_cond_t waiting_for_cond;
-static bool added = false;
+static volatile bool added = false;
 static int nums[16];
 
 
 /************************ HELPER FUNCTIONS ************************/
-static ssize_t tryToSend(int fd, void* send_from, int count) {
+static ssize_t tryToGroupSend(int fd, void* send_from, int count) {
     ssize_t ret = chsend(fd, send_from, count);
     if (ret == -1) {
         if (errno == EPIPE) {
@@ -101,10 +101,9 @@ static ssize_t tryToSend(int fd, void* send_from, int count) {
     return ret;
 }
 
-static ssize_t tryToReceive(int fd, void* save_to, int count) {
+static ssize_t tryToGroupReceive(int fd, void* save_to, int count) {
     ssize_t ret = chrecv(fd, save_to, count);
     if (ret == 0) {
-        printf("tryToRecv in %d gone wrong\n", my_rank);
         closeGroupPipes();
         return -1;
     }
@@ -114,14 +113,35 @@ static ssize_t tryToReceive(int fd, void* save_to, int count) {
     return ret;
 }
 
-static ssize_t tryToSendConst(int fd, const void* send_from, int count) {
+static ssize_t tryToPointSend(int fd, const void* send_from, int count) {
     ssize_t ret = chsend(fd, send_from, count);
     if (ret == -1) {
         if (errno == EPIPE) {
-            closeGroupPipes();
             return -1;
         }
         ASSERT_SYS_OK(chsend(fd, send_from, count));
+    }
+    return ret;
+}
+
+static ssize_t tryToPointSendConst(int fd, const void* send_from, int count) {
+    ssize_t ret = chsend(fd, send_from, count);
+    if (ret == -1) {
+        if (errno == EPIPE) {
+            return -1;
+        }
+        ASSERT_SYS_OK(chsend(fd, send_from, count));
+    }
+    return ret;
+}
+
+static ssize_t tryToPointReceive(int fd, void* save_to, int count) {
+    ssize_t ret = chrecv(fd, save_to, count);
+    if (ret == 0) {
+        return -1;
+    }
+    else if (ret < 0) {
+        ASSERT_SYS_OK(chrecv(fd, save_to, count));
     }
     return ret;
 }
@@ -141,7 +161,6 @@ void setDeadlocks(bool deadlock_detection) {
 
 /************************ FUNCTIONS FOR FINALIZE ************************/
 void closeGroupPipes() {
-    printf("%d in closeGroupPipes\n", my_rank);
     for (int i = 0; i < 3; i++) {
         close(700 + 6 * (my_rank + 1) + i);
         close(700 + 6 * (my_rank + 1) + i - 3);
@@ -168,11 +187,11 @@ static void* Reader(void* _args) {
 
     while (true) {
         int count;
-        // printf("me: %d, trying to read from %d, adress: %p, fd: %d\n", my_rank, 
-        // readingFrom, _args, (20 * (2 * my_rank + 1) + readingFrom));
-        if (tryToReceive((20 * (2 * my_rank + 1) + readingFrom), 
+        //printf("me: %d, trying to read from %d, adress: %p, fd: %d\n", my_rank, 
+        //readingFrom, _args, (20 * (2 * my_rank + 1) + readingFrom));
+        if (tryToPointReceive((20 * (2 * my_rank + 1) + readingFrom), 
             &count, sizeof(int)) == -1) {
-                printf("reader went wrong %d\n", my_rank);
+            //printf("reader of %d from %d went wrong\n", my_rank, readingFrom);
             ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[readingFrom]));
             has_finished[readingFrom] = true;
             ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[readingFrom]));
@@ -180,7 +199,7 @@ static void* Reader(void* _args) {
             pthread_exit(NULL);
         }
 
-        printf("%d got a message from %d with count %d\n", my_rank, readingFrom, count);
+        //printf("%d got a message from %d with count %d\n", my_rank, readingFrom, count);
 
         size_t read_bytes = 0;
         ssize_t read = 0;
@@ -190,7 +209,7 @@ static void* Reader(void* _args) {
             size_t to_read = (count - read_bytes > BUFFER_SIZE) ? BUFFER_SIZE :
                 (count - read_bytes);
 
-            read = tryToReceive((20 * (2 * my_rank + 1) + readingFrom), 
+            read = tryToPointReceive((20 * (2 * my_rank + 1) + readingFrom), 
                 buf + read_bytes, to_read);
 
             if (read == -1) {
@@ -202,16 +221,16 @@ static void* Reader(void* _args) {
                 pthread_exit(NULL);
             }
 
-            printf("blbl? %d lblb\n", *(int*) buf);
+            //printf("blbl? %d lblb\n", *(int*) buf);
 
             read_bytes += read;
         }
 
-        printf("message: %s\n", (char*) buf);
+        //printf("message: %s\n", (char*) buf);
 
         int tag;
 
-        if (tryToReceive((20 * (2 * my_rank + 1) + readingFrom), 
+        if (tryToPointReceive((20 * (2 * my_rank + 1) + readingFrom), 
             &tag, sizeof(int)) == -1) {
             free(buf);
             ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[readingFrom]));
@@ -221,7 +240,7 @@ static void* Reader(void* _args) {
             pthread_exit(NULL);
         }
 
-        printf("tag: %d", tag);
+        //printf("tag: %d\n", tag);
 
         MIMPI_message *to_save = malloc(sizeof(MIMPI_message));
         to_save -> data = buf;
@@ -247,7 +266,23 @@ static void* Reader(void* _args) {
             waiting_for -> tag == tag
         )) {
             added = true;
+            //printf("signalling\n");
             ASSERT_ZERO(pthread_cond_signal(&waiting_for_cond));
+        }
+
+        //printf("elo\n");
+
+        temp = list[readingFrom];
+
+        int i = 0;
+        while (temp -> next != NULL) {
+            //printf("i: %d\n", i);
+            i++;
+            if (temp -> message != NULL) {
+                //printf("count %d, data %s, tag %d\n", temp -> message -> count,
+                // (char*) temp -> message -> data, temp -> message -> tag);
+            }
+            temp = temp -> next;
         }
 
         ASSERT_ZERO(pthread_mutex_unlock(&mutex_list[readingFrom]));
@@ -257,12 +292,7 @@ static void* Reader(void* _args) {
 
 // HELPERS
 MIMPI_Retcode Search(void* data, int count, int source, int tag) {
-    ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[source]));
-    if (has_finished[source]) {
-        ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
-        return MIMPI_ERROR_REMOTE_FINISHED;
-    }
-
+    //printf("%d searching\n", my_rank);
     ASSERT_ZERO(pthread_mutex_lock(&mutex_list[source]));
     messages_node *before_temp = list[source];
     messages_node *temp = list[source];
@@ -285,19 +315,24 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
             waiting_for -> tag = tag;
             waiting_for -> source = source;
 
-            while (!added || !has_finished[source]) {
+            while (!added && !has_finished[source]) {
+                //printf("%d waiting for a message\n", my_rank);
                 ASSERT_ZERO(pthread_cond_wait(&waiting_for_cond, 
                     &mutex_list[source]));
+                //printf("added %d, finished %d\n", added, has_finished[source]);
             }
 
             waiting_for -> tag = -1;
+            waiting_for -> count = -1;
+            waiting_for -> source = -1;
             
             ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[source]));
-            if (has_finished[source]) {
+            if (!added && has_finished[source]) {
                 ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
                 added = false;
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
+            ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
 
             added = false;
             while (temp -> next != NULL || (
@@ -332,6 +367,8 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
             }
 
             waiting_for -> tag = -1;
+            waiting_for -> count = -1;
+            waiting_for -> source = -1;
             
             ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[source]));
             if (has_finished[source]) {
@@ -351,6 +388,8 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
         }
     }
 
+    //printf("search found message: %d\n", *(int*) temp -> message -> data);
+
     memcpy(data, temp -> message -> data, count);
             
     before_temp -> next = temp -> next;
@@ -367,7 +406,9 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
 
 MIMPI_Retcode Send(const void* data, int count, int destination, int tag) 
 {
-    if (tryToSend((40 * (destination + 1) + my_rank), 
+    //printf("me: %d, trying to send to %d, adress: %p, fd: %d\n", my_rank, 
+        //destination, data, (40 * (destination + 1) + my_rank));
+    if (tryToPointSend((40 * (destination + 1) + my_rank), 
         &count, sizeof(count)) == -1) {
         return MIMPI_ERROR_REMOTE_FINISHED;
     }
@@ -379,11 +420,10 @@ MIMPI_Retcode Send(const void* data, int count, int destination, int tag)
         size_t to_send = (count - sent_bytes > BUFFER_SIZE) ? BUFFER_SIZE : 
             (count - sent_bytes);
 
-        wrote = tryToSendConst((40 * (destination + 1) + my_rank), 
+        wrote = tryToPointSendConst((40 * (destination + 1) + my_rank), 
             data + sent_bytes, to_send);
 
         if (wrote == -1) {
-            printf("yyyy\n");
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
 
@@ -391,17 +431,20 @@ MIMPI_Retcode Send(const void* data, int count, int destination, int tag)
         
     }
 
-    if (tryToSend((40 * (destination + 1) + my_rank), 
+    if (tryToPointSend((40 * (destination + 1) + my_rank), 
         &tag, sizeof(tag)) == -1) {
-            printf("YYYY\n");
         return MIMPI_ERROR_REMOTE_FINISHED;
     }
 
-    printf("%d exited send\n", my_rank);
     return MIMPI_SUCCESS;
 }
 
 void createReaders() {
+    waiting_for = malloc(sizeof(MIMPI_message));
+    waiting_for -> tag = -1;
+    waiting_for -> count = -1;
+    waiting_for -> source = -1;
+
     for (int i = 0; i < world_size; i++) {
         messages_node *guard = malloc(sizeof(messages_node));
         guard -> message = NULL;
@@ -419,7 +462,6 @@ void createReaders() {
     for (int i = 0; i < world_size; i++) {
         int* j = malloc(sizeof(int));
         *j = i;
-        // czy to się nie wyrąbie? wyrąbuje się
         if (i != my_rank) {
             ASSERT_ZERO(pthread_create(&readers[i], NULL, Reader, (void*) j));
         }
@@ -428,15 +470,22 @@ void createReaders() {
 
 void killReaders() {
     for (int i = 0; i < world_size; i++) {
-        if (!has_finished[i]) {
+        if (!has_finished[i] && i != my_rank) {
             pthread_cancel(readers[i]);
-            pthread_join(readers[i], NULL);
         }
         pthread_mutex_destroy(&mutex_list[i]);
         pthread_mutex_destroy(&has_finished_mutex[i]);
     }
 
     pthread_cond_destroy(&waiting_for_cond);
+
+    for (int i = 0; i < world_size; i++) {
+        if (i != my_rank) {
+            pthread_join(readers[i], NULL);
+        }
+    }
+
+    free(waiting_for);
 }
 
 void closePointToPointPipes() {
@@ -525,92 +574,81 @@ static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
     return res_tab;
 }
 
-
 // EXTERN FUNCTIONS
 
 MIMPI_Retcode Barrier(void) {
-    char to_send = '0';
-    char* to_receive = malloc(sizeof(char));
+    int to_send = 3;
+    int* to_receive = malloc(sizeof(int));
     int me = my_rank + 1;
     int left_child = 2 * me;
     int right_child = 2 * me + 1;
 
     if (left_child < world_size + 1) {
-        printf("barrier? %d\n", my_rank);
-        if (tryToReceive((700 + 6 * me + 1 - 3), 
+        if (tryToGroupReceive((700 + 6 * me + 1 - 3), 
             to_receive, sizeof(char)) == -1) {
             free(to_receive);
-            printf("me: %d, 1\n", my_rank);
-            printf("left_child: %d, world size + 1: %d\n", left_child, world_size + 1);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (right_child < world_size + 1) 
     {
-        if (tryToReceive((700 + 6 * me + 2 - 3), 
+        if (tryToGroupReceive((700 + 6 * me + 2 - 3), 
             to_receive, sizeof(char)) == -1) {
             free(to_receive);
-            printf("me: %d, 2\n", my_rank);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (me != 1) 
     {
-        if (tryToSend((700 + 6 * me + 0), &to_send, sizeof(char)) == -1) {
+        if (tryToGroupSend((700 + 6 * me + 0), &to_send, sizeof(char)) == -1) {
             free(to_receive);
-            printf("me: %d, 3\n", my_rank);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
 
-        if(tryToReceive((700 + 6 * me + 0 - 3), 
+        if(tryToGroupReceive((700 + 6 * me + 0 - 3), 
             to_receive, sizeof(char)) == -1) {
             free(to_receive);
-            printf("me: %d, 4\n", my_rank);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (left_child < world_size + 1) {
-        if(tryToSend((700 + 6 * me + 1), &to_send, sizeof(char)) == -1) {
+        if(tryToGroupSend((700 + 6 * me + 1), &to_send, sizeof(char)) == -1) {
             free(to_receive);
-            printf("me: %d, 5\n", my_rank);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (right_child < world_size + 1) {
-        if(tryToSend((700 + 6 * me + 2), &to_send, sizeof(char)) == -1) {
+        if(tryToGroupSend((700 + 6 * me + 2), &to_send, sizeof(char)) == -1) {
             free(to_receive);
-            printf("me: %d, 6\n", my_rank);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     free(to_receive);
 
-    printf("%d exited barrier\n", my_rank);
-
     return MIMPI_SUCCESS;
 }
 
 MIMPI_Retcode Bcast(void *data, int count, int root) {
-    char to_send = '1';
-    char* to_receive = malloc(sizeof(char));
+    int to_send = 1;
+    int* to_receive = malloc(sizeof(int));
     int me = my_rank + 1;
     int left_child = 2 * me;
     int right_child = 2 * me + 1;
 
     if (root == my_rank && me != 1) {
-        if(tryToSend((900 + 4 * me + 2), data, count) == -1) {
+        if(tryToGroupSend((900 + 4 * me + 2), data, count) == -1) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (left_child < world_size + 1) {
-        if (tryToReceive((700 + 6 * me + 1 - 3), 
+        if (tryToGroupReceive((700 + 6 * me + 1 - 3), 
             to_receive, sizeof(char)) == -1) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
@@ -618,7 +656,7 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
     }
 
     if (right_child < world_size + 1) {
-        if (tryToReceive((700 + 6 * me + 2 - 3), 
+        if (tryToGroupReceive((700 + 6 * me + 2 - 3), 
             to_receive, sizeof(char)) == -1) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
@@ -626,32 +664,32 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
     }
 
     if (me == 1 && root != my_rank) {
-        if (tryToReceive((900 + 4 * (root + 1) + 1), data, count) == -1) {
+        if (tryToGroupReceive((900 + 4 * (root + 1) + 1), data, count) == -1) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }   
     }
 
     if (me != 1) {
-        if(tryToSend((700 + 6 * me + 0), &to_send, sizeof(char)) == -1) {
+        if(tryToGroupSend((700 + 6 * me + 0), &to_send, sizeof(char)) == -1) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
-        if (tryToReceive((700 + 6 * me + 0 - 3), data, count) == -1) {
+        if (tryToGroupReceive((700 + 6 * me + 0 - 3), data, count) == -1) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (left_child < world_size + 1) {
-        if(tryToSend((700 + 6 * me + 1), data, count) == -1) {
+        if(tryToGroupSend((700 + 6 * me + 1), data, count) == -1) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
     if (right_child < world_size + 1) {
-        if(tryToSend((700 + 6 * me + 2), data, count) == -1) {
+        if(tryToGroupSend((700 + 6 * me + 2), data, count) == -1) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
@@ -669,8 +707,8 @@ MIMPI_Retcode Reduce(
     MIMPI_Op op,
     int root
 ) {
-    char to_send = '2';
-    char* to_receive = malloc(sizeof(char));
+    int to_send = 2;
+    int* to_receive = malloc(sizeof(int));
     void* tab1 = malloc(count);
     void* tab2 = malloc(count);
     u_int8_t* res_tab;
@@ -680,7 +718,7 @@ MIMPI_Retcode Reduce(
     int right_child = 2 * me + 1;
 
     if (left_child < world_size + 1) {
-        if (tryToReceive((700 + 6 * me + 1 - 3), tab1, count) == -1) {
+        if (tryToGroupReceive((700 + 6 * me + 1 - 3), tab1, count) == -1) {
             free(to_receive);
             free(tab1);
             free(tab2);
@@ -700,7 +738,7 @@ MIMPI_Retcode Reduce(
     }
 
     if (right_child < world_size + 1) {
-        if (tryToReceive((700 + 6 * me + 2 - 3), tab2, count) == -1) {
+        if (tryToGroupReceive((700 + 6 * me + 2 - 3), tab2, count) == -1) {
             free(to_receive);
             free(tab1);
             free(tab2);
@@ -714,7 +752,7 @@ MIMPI_Retcode Reduce(
     }
 
     if (me != 1) {
-        if(tryToSend((700 + 6 * me + 0), res_tab, count) == -1) {
+        if(tryToGroupSend((700 + 6 * me + 0), res_tab, count) == -1) {
             free(to_receive);
             free(tab1);
             free(tab2);
@@ -727,7 +765,7 @@ MIMPI_Retcode Reduce(
             }
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
-        if (tryToReceive((700 + 6 * me + 0 - 3), 
+        if (tryToGroupReceive((700 + 6 * me + 0 - 3), 
             to_receive, sizeof(char)) == -1) {
                 free(to_receive);     
             free(tab1);
@@ -744,7 +782,7 @@ MIMPI_Retcode Reduce(
     }
 
     if (left_child < world_size + 1) {
-        if(tryToSend((700 + 6 * me + 1), &to_send, sizeof(char)) == -1) {
+        if(tryToGroupSend((700 + 6 * me + 1), &to_send, sizeof(char)) == -1) {
             free(to_receive);     
             free(tab1);
             free(tab2);
@@ -760,7 +798,7 @@ MIMPI_Retcode Reduce(
     }
 
     if (right_child < world_size + 1) {
-        if(tryToSend((700 + 6 * me + 2), &to_send, sizeof(char)) == -1) {
+        if(tryToGroupSend((700 + 6 * me + 2), &to_send, sizeof(char)) == -1) {
             free(to_receive);     
             free(tab1);
             free(tab2);
@@ -776,7 +814,7 @@ MIMPI_Retcode Reduce(
     }
 
     if (me == 1 && my_rank != root) {
-        if(tryToSend((900 + 4 * (root + 1) + 0), res_tab, count) == -1) {
+        if(tryToGroupSend((900 + 4 * (root + 1) + 0), res_tab, count) == -1) {
             free(to_receive);     
             free(tab1);
             free(tab2);
@@ -793,7 +831,7 @@ MIMPI_Retcode Reduce(
 
     if (my_rank == root) {
         if (me != 1) {
-            if (tryToReceive((900 + 4 * me + 3), recv_data, count) == -1) {
+            if (tryToGroupReceive((900 + 4 * me + 3), recv_data, count) == -1) {
                 free(to_receive);     
                 free(tab1);
                 free(tab2);

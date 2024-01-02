@@ -1,20 +1,19 @@
 {
-    // Use IntelliSense to learn about possible attributes.
-    // Hover to view descriptions of existing attributes.
-    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "(gdb) Launch",
+            "name": "Debug",
             "type": "cppdbg",
             "request": "launch",
-            "program": "enter program name, for example ${workspaceFolder}/a.out",
-            "args": ["4", "./examples_build/bare_reduce"],
+            "program": "${workspaceFolder}/mimpirun", // replace <your-program> with your executable
+            "args": ["4","examples_build/deadlock"], // add your arguments here
             "stopAtEntry": false,
-            "cwd": "${fileDirname}",
+            "cwd": "${workspaceFolder}",
             "environment": [],
             "externalConsole": false,
             "MIMode": "gdb",
+            "debugServerArgs": "multi",
+            "miDebuggerArgs": "-i=mi --interpreter=mi2",
             "setupCommands": [
                 {
                     "description": "Enable pretty-printing for gdb",
@@ -22,8 +21,8 @@
                     "ignoreFailures": true
                 },
                 {
-                    "description": "Set Disassembly Flavor to Intel",
-                    "text": "-gdb-set disassembly-flavor intel",
+                    "description": "Follow child on fork",
+                    "text": "set follow-fork-mode child",
                     "ignoreFailures": true
                 }
             ]
