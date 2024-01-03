@@ -14,8 +14,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-//#include <pthread.h>
-
 _Noreturn void syserr(const char* fmt, ...)
 {
     va_list fmt_args;
@@ -161,12 +159,22 @@ void setDeadlocks(bool deadlock_detection) {
 }
 
 void initMutexes() {
+    ASSERT_ZERO(pthread_mutex_init(&waiting_for_mutex, NULL));
+
+    for (int i = 0; i < world_size; i++) {
+        ASSERT_ZERO(pthread_mutex_init(&mutex_list[i], NULL));
+        ASSERT_ZERO(pthread_mutex_init(&has_finished_mutex[i], NULL));
+        nums[i] = i;
+    }
+
+    ASSERT_ZERO(pthread_cond_init(&waiting_for_cond, NULL));
+}
+
+void initListsAndVariables() {
     waiting_for = malloc(sizeof(MIMPI_message));
     waiting_for -> tag = -1;
     waiting_for -> count = -1;
     waiting_for -> source = -1;
-
-    ASSERT_ZERO(pthread_mutex_init(&waiting_for_mutex, NULL));
 
     for (int i = 0; i < world_size; i++) {
         messages_node *guard = malloc(sizeof(messages_node));
@@ -174,13 +182,7 @@ void initMutexes() {
         guard -> next = NULL;
 
         list[i] = guard; // pamiętać żeby to dealokować przy wychodzeniu
-
-        ASSERT_ZERO(pthread_mutex_init(&mutex_list[i], NULL));
-        ASSERT_ZERO(pthread_mutex_init(&has_finished_mutex[i], NULL));
-        nums[i] = i;
     }
-
-    ASSERT_ZERO(pthread_cond_init(&waiting_for_cond, NULL));
 }
 
 /************************ FUNCTIONS FOR FINALIZE ************************/
@@ -207,8 +209,6 @@ void killReaders() {
             pthread_join(readers[i], NULL);
         }
     }
-
-    free(waiting_for);
 }
 
 void closePointToPointPipes() {
@@ -245,9 +245,41 @@ void closeGroupPipes() {
     }
 }
 
+void cleanListsAndVariables() {
+    free(waiting_for);
+    messages_node *before;
+    messages_node *after;
+    for (int i = 0; i < world_size; i++) {
+        before = list[i];
+        after = before -> next;
+
+        while (before -> next != NULL) {
+            if (before -> message != NULL) {
+                if (before -> message -> data != NULL) {
+                    free(before -> message -> data);
+                }
+                free(before -> message);
+            }
+
+            free(before);
+            before = after;
+            after = after -> next;
+        }
+
+        if (before -> message != NULL) {
+            if (before -> message -> data != NULL) {
+                free(before -> message -> data);
+            }
+            free(before -> message);
+        }
+
+        free(before);
+
+    }
+}
+
 /************************ POINT TO POINT FUNCTIONS ************************/
 static void readerCleanup(int readingFrom) {
-    printf("me: %d, readingFrom %d has finished\n", my_rank, readingFrom);
     ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[readingFrom]));
     has_finished[readingFrom] = true;
     ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[readingFrom]));
@@ -266,7 +298,6 @@ static void readerCleanup(int readingFrom) {
 
 static void* Reader(void* _args) {
     int readingFrom = *(int*) _args;
-    //free(_args);
 
     while (true) {
         int count;
@@ -321,12 +352,6 @@ static void* Reader(void* _args) {
         temp -> next = new_node;
         new_node -> message = to_save;
         new_node -> next = NULL;
-
-        printf("%d read a message of count %d, data %d, tag %d from %d\n",
-            my_rank, new_node -> message -> count, 
-            *(int*) new_node -> message -> data, 
-            new_node -> message -> tag, 
-            new_node -> message -> source);
 
         ASSERT_ZERO(pthread_mutex_lock(&waiting_for_mutex));
         if (waiting_for -> count == count && 
@@ -388,14 +413,11 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
     ASSERT_ZERO(pthread_mutex_lock(&mutex_list[source]));
     messages_node *before_temp = list[source];
     messages_node *temp = list[source];
-
-    // printf("me %d, looking for: count %d, tag %d\n", my_rank, temp->message->count,
-    //     temp->message->tag);
     
     if (tag != MIMPI_ANY_TAG) {
-        while (temp -> next != NULL || (
-            temp -> message != NULL &&
-            temp -> message -> tag != tag &&
+        while (temp -> next != NULL && (
+            temp -> message == NULL ||
+            (temp -> message -> tag != tag) ||
             temp -> message -> count != count
         )) {
             before_temp = temp;
@@ -411,9 +433,9 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
             
-            while (temp -> next != NULL || (
-                temp -> message != NULL &&
-                temp -> message -> tag != tag &&
+            while (temp -> next != NULL && (
+                temp -> message == NULL ||
+                temp -> message -> tag != tag ||
                 temp -> message -> count != count
             )) {
                 before_temp = temp;
@@ -422,8 +444,8 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
         }        
     }
     else {
-        while (temp -> next != NULL || (
-            temp -> message != NULL &&
+        while (temp -> next != NULL && (
+            temp -> message == NULL ||
             temp -> message -> count != count
         )) {
             before_temp = temp;
@@ -438,8 +460,8 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
 
-            while (temp -> next != NULL || (
-                temp -> message != NULL &&
+            while (temp -> next == NULL && (
+                temp -> message == NULL ||
                 temp -> message -> count != count
             )) {
                 before_temp = temp;
@@ -448,10 +470,6 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
         }
     }
 
-    printf("%d found a message with count %d, data %d, tag %d from %d\n",
-        my_rank, 
-        temp -> message -> count, *(int*) temp -> message -> data, 
-        temp -> message -> tag, source);
     memcpy(data, temp -> message -> data, count);
             
     before_temp -> next = temp -> next;

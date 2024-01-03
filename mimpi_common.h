@@ -58,12 +58,14 @@ void setWorldSize(int);
 void setDeadlocks(bool);
 void initMutexes();
 void createReaders();
+void initListsAndVariables();
 
 /************************ FUNCTIONS FOR FINALIZE ************************/
 void closeGroupPipes();
 void closePointToPointPipes();
 void destroyMutexes();
 void killReaders();
+void cleanListsAndVariables();
 
 /************************ POINT TO POINT FUNCTIONS ************************/
 MIMPI_Retcode Send(const void*, int, int, int);
