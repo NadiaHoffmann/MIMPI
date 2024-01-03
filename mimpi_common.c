@@ -84,7 +84,6 @@ static MIMPI_message *waiting_for;
 static pthread_cond_t waiting_for_cond;
 static pthread_mutex_t waiting_for_mutex;
 static volatile bool added = false;
-static int nums[16];
 
 
 /************************ HELPER FUNCTIONS ************************/
@@ -164,7 +163,6 @@ void initMutexes() {
     for (int i = 0; i < world_size; i++) {
         ASSERT_ZERO(pthread_mutex_init(&mutex_list[i], NULL));
         ASSERT_ZERO(pthread_mutex_init(&has_finished_mutex[i], NULL));
-        nums[i] = i;
     }
 
     ASSERT_ZERO(pthread_cond_init(&waiting_for_cond, NULL));
@@ -181,7 +179,7 @@ void initListsAndVariables() {
         guard -> message = NULL;
         guard -> next = NULL;
 
-        list[i] = guard; // pamiętać żeby to dealokować przy wychodzeniu
+        list[i] = guard;
     }
 }
 
@@ -298,6 +296,7 @@ static void readerCleanup(int readingFrom) {
 
 static void* Reader(void* _args) {
     int readingFrom = *(int*) _args;
+    free(_args);
 
     while (true) {
         int count;
