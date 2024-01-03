@@ -84,6 +84,7 @@ static messages_node* list[16];
 static pthread_mutex_t mutex_list[16];
 static MIMPI_message *waiting_for;
 static pthread_cond_t waiting_for_cond;
+static pthread_mutex_t waiting_for_mutex;
 static volatile bool added = false;
 static int nums[16];
 
@@ -159,7 +160,73 @@ void setDeadlocks(bool deadlock_detection) {
     deadlocks = deadlock_detection;
 }
 
+void initMutexes() {
+    waiting_for = malloc(sizeof(MIMPI_message));
+    waiting_for -> tag = -1;
+    waiting_for -> count = -1;
+    waiting_for -> source = -1;
+
+    ASSERT_ZERO(pthread_mutex_init(&waiting_for_mutex, NULL));
+
+    for (int i = 0; i < world_size; i++) {
+        messages_node *guard = malloc(sizeof(messages_node));
+        guard -> message = NULL;
+        guard -> next = NULL;
+
+        list[i] = guard; // pamiętać żeby to dealokować przy wychodzeniu
+
+        ASSERT_ZERO(pthread_mutex_init(&mutex_list[i], NULL));
+        ASSERT_ZERO(pthread_mutex_init(&has_finished_mutex[i], NULL));
+        nums[i] = i;
+    }
+
+    ASSERT_ZERO(pthread_cond_init(&waiting_for_cond, NULL));
+}
+
 /************************ FUNCTIONS FOR FINALIZE ************************/
+void destroyMutexes() {
+    for (int i = 0; i < world_size; i++) {
+        pthread_mutex_destroy(&mutex_list[i]);
+        pthread_mutex_destroy(&has_finished_mutex[i]);
+    }
+
+    pthread_mutex_destroy(&waiting_for_mutex);
+
+    pthread_cond_destroy(&waiting_for_cond);
+}
+
+void killReaders() {
+    for (int i = 0; i < world_size; i++) {
+        if (!has_finished[i] && i != my_rank) {
+            pthread_cancel(readers[i]);
+        }
+    }
+
+    for (int i = 0; i < world_size; i++) {
+        if (i != my_rank) {
+            pthread_join(readers[i], NULL);
+        }
+    }
+
+    free(waiting_for);
+}
+
+void closePointToPointPipes() {
+    for (int i = 0; i < world_size; i++) {
+        for (int j = 0; j < world_size; j++) {
+            if (i != j) {
+                if (i == my_rank) {
+                    close((20 * (2 * i + 1)) + j);
+                }
+
+                if (j == my_rank) {
+                    close((40 * (i + 1)) + j);
+                }
+            }
+        }
+    }
+}
+
 void closeGroupPipes() {
     for (int i = 0; i < 3; i++) {
         close(700 + 6 * (my_rank + 1) + i);
@@ -179,6 +246,21 @@ void closeGroupPipes() {
 }
 
 /************************ POINT TO POINT FUNCTIONS ************************/
+static void readerCleanup(int readingFrom) {
+    ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[readingFrom]));
+    has_finished[readingFrom] = true;
+    ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[readingFrom]));
+
+    ASSERT_ZERO(pthread_mutex_lock(&waiting_for_mutex));
+    if (waiting_for -> source == readingFrom) {
+        ASSERT_ZERO(pthread_mutex_unlock(&waiting_for_mutex));
+        ASSERT_ZERO(pthread_cond_signal(&waiting_for_cond));
+    }
+    else {
+        ASSERT_ZERO(pthread_mutex_unlock(&waiting_for_mutex));
+    }
+}
+
 // THREADS
 
 static void* Reader(void* _args) {
@@ -187,19 +269,11 @@ static void* Reader(void* _args) {
 
     while (true) {
         int count;
-        //printf("me: %d, trying to read from %d, adress: %p, fd: %d\n", my_rank, 
-        //readingFrom, _args, (20 * (2 * my_rank + 1) + readingFrom));
         if (tryToPointReceive((20 * (2 * my_rank + 1) + readingFrom), 
             &count, sizeof(int)) == -1) {
-            //printf("reader of %d from %d went wrong\n", my_rank, readingFrom);
-            ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[readingFrom]));
-            has_finished[readingFrom] = true;
-            ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[readingFrom]));
-            ASSERT_ZERO(pthread_cond_signal(&waiting_for_cond));
+            readerCleanup(readingFrom);
             pthread_exit(NULL);
         }
-
-        //printf("%d got a message from %d with count %d\n", my_rank, readingFrom, count);
 
         size_t read_bytes = 0;
         ssize_t read = 0;
@@ -214,33 +288,21 @@ static void* Reader(void* _args) {
 
             if (read == -1) {
                 free(buf);
-                ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[readingFrom]));
-                has_finished[readingFrom] = true;
-                ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[readingFrom]));
-                ASSERT_ZERO(pthread_cond_signal(&waiting_for_cond));
+                readerCleanup(readingFrom);
                 pthread_exit(NULL);
             }
 
-            //printf("blbl? %d lblb\n", *(int*) buf);
-
             read_bytes += read;
         }
-
-        //printf("message: %s\n", (char*) buf);
 
         int tag;
 
         if (tryToPointReceive((20 * (2 * my_rank + 1) + readingFrom), 
             &tag, sizeof(int)) == -1) {
             free(buf);
-            ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[readingFrom]));
-            has_finished[readingFrom] = true;
-            ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[readingFrom]));
-            ASSERT_ZERO(pthread_cond_signal(&waiting_for_cond));
+            readerCleanup(readingFrom);
             pthread_exit(NULL);
         }
-
-        //printf("tag: %d\n", tag);
 
         MIMPI_message *to_save = malloc(sizeof(MIMPI_message));
         to_save -> data = buf;
@@ -259,40 +321,63 @@ static void* Reader(void* _args) {
         new_node -> message = to_save;
         new_node -> next = NULL;
 
+        ASSERT_ZERO(pthread_mutex_lock(&waiting_for_mutex));
         if (waiting_for -> count == count && 
             waiting_for -> source == readingFrom &&
         (
             waiting_for -> tag == MIMPI_ANY_TAG ||
             waiting_for -> tag == tag
         )) {
+            ASSERT_ZERO(pthread_mutex_unlock(&waiting_for_mutex));
             added = true;
-            //printf("signalling\n");
             ASSERT_ZERO(pthread_cond_signal(&waiting_for_cond));
         }
-
-        //printf("elo\n");
-
-        temp = list[readingFrom];
-
-        int i = 0;
-        while (temp -> next != NULL) {
-            //printf("i: %d\n", i);
-            i++;
-            if (temp -> message != NULL) {
-                //printf("count %d, data %s, tag %d\n", temp -> message -> count,
-                // (char*) temp -> message -> data, temp -> message -> tag);
-            }
-            temp = temp -> next;
-        }
+        else {
+            ASSERT_ZERO(pthread_mutex_unlock(&waiting_for_mutex));
+        } 
 
         ASSERT_ZERO(pthread_mutex_unlock(&mutex_list[readingFrom]));
     }
     pthread_exit(NULL);
 }
 
+static MIMPI_Retcode waitForMessage(int count, int source, int tag) {
+    ASSERT_ZERO(pthread_mutex_lock(&waiting_for_mutex));
+    waiting_for -> count = count;
+    waiting_for -> tag = tag;
+    waiting_for -> source = source;
+    ASSERT_ZERO(pthread_mutex_unlock(&waiting_for_mutex));
+
+    ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[source]));
+    while (!added && !has_finished[source]) {
+        ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
+        ASSERT_ZERO(pthread_cond_wait(&waiting_for_cond, 
+            &mutex_list[source]));
+        ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[source]));
+    }
+    ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
+
+    ASSERT_ZERO(pthread_mutex_lock(&waiting_for_mutex));
+    waiting_for -> tag = -1;
+    waiting_for -> count = -1;
+    waiting_for -> source = -1;
+    ASSERT_ZERO(pthread_mutex_unlock(&waiting_for_mutex));
+    
+    ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[source]));
+    if (!added && has_finished[source]) {
+        ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
+        added = false;
+        return MIMPI_ERROR_REMOTE_FINISHED;
+    }
+    ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
+
+    added = false;
+
+    return MIMPI_SUCCESS;
+}
+
 // HELPERS
 MIMPI_Retcode Search(void* data, int count, int source, int tag) {
-    //printf("%d searching\n", my_rank);
     ASSERT_ZERO(pthread_mutex_lock(&mutex_list[source]));
     messages_node *before_temp = list[source];
     messages_node *temp = list[source];
@@ -311,30 +396,11 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
             temp -> message -> tag != tag || 
             temp -> message -> count != count
         ) {
-            waiting_for -> count = count;
-            waiting_for -> tag = tag;
-            waiting_for -> source = source;
-
-            while (!added && !has_finished[source]) {
-                //printf("%d waiting for a message\n", my_rank);
-                ASSERT_ZERO(pthread_cond_wait(&waiting_for_cond, 
-                    &mutex_list[source]));
-                //printf("added %d, finished %d\n", added, has_finished[source]);
-            }
-
-            waiting_for -> tag = -1;
-            waiting_for -> count = -1;
-            waiting_for -> source = -1;
-            
-            ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[source]));
-            if (!added && has_finished[source]) {
-                ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
-                added = false;
+            if (waitForMessage(count, source, tag) 
+                == MIMPI_ERROR_REMOTE_FINISHED) {
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
-            ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
-
-            added = false;
+            
             while (temp -> next != NULL || (
                 temp -> message != NULL &&
                 temp -> message -> tag != tag &&
@@ -357,27 +423,11 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
         if (temp -> message == NULL || 
             temp -> message -> count != count 
         ) {
-            waiting_for -> count = count;
-            waiting_for -> tag = MIMPI_ANY_TAG;
-            waiting_for -> source = source;
-
-            while (!added || !has_finished[source]) {
-                ASSERT_ZERO(pthread_cond_wait(&waiting_for_cond, 
-                    &mutex_list[source]));
-            }
-
-            waiting_for -> tag = -1;
-            waiting_for -> count = -1;
-            waiting_for -> source = -1;
-            
-            ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[source]));
-            if (has_finished[source]) {
-                ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[source]));
-                added = false;
+            if (waitForMessage(count, source, MIMPI_ANY_TAG) 
+                == MIMPI_ERROR_REMOTE_FINISHED) {
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
 
-            added = false;
             while (temp -> next != NULL || (
                 temp -> message != NULL &&
                 temp -> message -> count != count
@@ -387,8 +437,6 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
             }
         }
     }
-
-    //printf("search found message: %d\n", *(int*) temp -> message -> data);
 
     memcpy(data, temp -> message -> data, count);
             
@@ -406,8 +454,6 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
 
 MIMPI_Retcode Send(const void* data, int count, int destination, int tag) 
 {
-    //printf("me: %d, trying to send to %d, adress: %p, fd: %d\n", my_rank, 
-        //destination, data, (40 * (destination + 1) + my_rank));
     if (tryToPointSend((40 * (destination + 1) + my_rank), 
         &count, sizeof(count)) == -1) {
         return MIMPI_ERROR_REMOTE_FINISHED;
@@ -440,66 +486,12 @@ MIMPI_Retcode Send(const void* data, int count, int destination, int tag)
 }
 
 void createReaders() {
-    waiting_for = malloc(sizeof(MIMPI_message));
-    waiting_for -> tag = -1;
-    waiting_for -> count = -1;
-    waiting_for -> source = -1;
-
-    for (int i = 0; i < world_size; i++) {
-        messages_node *guard = malloc(sizeof(messages_node));
-        guard -> message = NULL;
-        guard -> next = NULL;
-
-        list[i] = guard; // pamiętać żeby to dealokować przy wychodzeniu
-
-        ASSERT_ZERO(pthread_mutex_init(&mutex_list[i], NULL));
-        ASSERT_ZERO(pthread_mutex_init(&has_finished_mutex[i], NULL));
-        nums[i] = i;
-    }
-
-    ASSERT_ZERO(pthread_cond_init(&waiting_for_cond, NULL));
 
     for (int i = 0; i < world_size; i++) {
         int* j = malloc(sizeof(int));
         *j = i;
         if (i != my_rank) {
             ASSERT_ZERO(pthread_create(&readers[i], NULL, Reader, (void*) j));
-        }
-    }
-}
-
-void killReaders() {
-    for (int i = 0; i < world_size; i++) {
-        if (!has_finished[i] && i != my_rank) {
-            pthread_cancel(readers[i]);
-        }
-        pthread_mutex_destroy(&mutex_list[i]);
-        pthread_mutex_destroy(&has_finished_mutex[i]);
-    }
-
-    pthread_cond_destroy(&waiting_for_cond);
-
-    for (int i = 0; i < world_size; i++) {
-        if (i != my_rank) {
-            pthread_join(readers[i], NULL);
-        }
-    }
-
-    free(waiting_for);
-}
-
-void closePointToPointPipes() {
-    for (int i = 0; i < world_size; i++) {
-        for (int j = 0; j < world_size; j++) {
-            if (i != j) {
-                if (i == my_rank) {
-                    close((20 * (2 * i + 1)) + j);
-                }
-
-                if (j == my_rank) {
-                    close((40 * (i + 1)) + j);
-                }
-            }
         }
     }
 }
@@ -728,13 +720,8 @@ MIMPI_Retcode Reduce(
     }
     else {
         mid_tab = malloc(count);
-        for (int i = 0; i < count; i++) {
-            u_int8_t num = *(u_int8_t*) send_data;
 
-            mid_tab[i] = num;
-
-            send_data++;
-        }
+        memcpy(mid_tab, send_data, count);
     }
 
     if (right_child < world_size + 1) {
@@ -846,14 +833,7 @@ MIMPI_Retcode Reduce(
             }
         }
         else {
-            u_int8_t* placeholder = recv_data;
-            for (int i = 0; i < count; i++) {
-                u_int8_t num = *(u_int8_t*) res_tab;
-
-                placeholder[i] = num;
-
-                recv_data++;
-            }
+            memcpy(recv_data, res_tab, count);
         }
     }
 

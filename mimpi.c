@@ -32,6 +32,7 @@ void MIMPI_Init(bool enable_deadlock_detection) {
     setMyRank(my_no);
     setWorldSize(world);
     setDeadlocks(enable_deadlock_detection);
+    initMutexes();
     createReaders();
     // TODO
 }
@@ -40,10 +41,9 @@ void MIMPI_Finalize() {
     // TODO
     // zamykać wszystkie pipy procesu, zabijać wszystkie threads
     killReaders();
+    destroyMutexes();
     closeGroupPipes();
     closePointToPointPipes();
-
-    // printf("me: %d\n", my_no);
 
     channels_finalize();
 }

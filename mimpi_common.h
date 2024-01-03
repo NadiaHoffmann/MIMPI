@@ -56,11 +56,13 @@ _Noreturn extern void fatal(const char* fmt, ...);
 void setMyRank(int);
 void setWorldSize(int);
 void setDeadlocks(bool);
+void initMutexes();
 void createReaders();
 
 /************************ FUNCTIONS FOR FINALIZE ************************/
 void closeGroupPipes();
 void closePointToPointPipes();
+void destroyMutexes();
 void killReaders();
 
 /************************ POINT TO POINT FUNCTIONS ************************/
