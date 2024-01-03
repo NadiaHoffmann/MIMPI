@@ -247,6 +247,7 @@ void closeGroupPipes() {
 
 /************************ POINT TO POINT FUNCTIONS ************************/
 static void readerCleanup(int readingFrom) {
+    printf("me: %d, readingFrom %d has finished\n", my_rank, readingFrom);
     ASSERT_ZERO(pthread_mutex_lock(&has_finished_mutex[readingFrom]));
     has_finished[readingFrom] = true;
     ASSERT_ZERO(pthread_mutex_unlock(&has_finished_mutex[readingFrom]));
@@ -321,6 +322,12 @@ static void* Reader(void* _args) {
         new_node -> message = to_save;
         new_node -> next = NULL;
 
+        printf("%d read a message of count %d, data %d, tag %d from %d\n",
+            my_rank, new_node -> message -> count, 
+            *(int*) new_node -> message -> data, 
+            new_node -> message -> tag, 
+            new_node -> message -> source);
+
         ASSERT_ZERO(pthread_mutex_lock(&waiting_for_mutex));
         if (waiting_for -> count == count && 
             waiting_for -> source == readingFrom &&
@@ -334,7 +341,7 @@ static void* Reader(void* _args) {
         }
         else {
             ASSERT_ZERO(pthread_mutex_unlock(&waiting_for_mutex));
-        } 
+        }
 
         ASSERT_ZERO(pthread_mutex_unlock(&mutex_list[readingFrom]));
     }
@@ -382,6 +389,9 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
     messages_node *before_temp = list[source];
     messages_node *temp = list[source];
 
+    // printf("me %d, looking for: count %d, tag %d\n", my_rank, temp->message->count,
+    //     temp->message->tag);
+    
     if (tag != MIMPI_ANY_TAG) {
         while (temp -> next != NULL || (
             temp -> message != NULL &&
@@ -438,6 +448,10 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
         }
     }
 
+    printf("%d found a message with count %d, data %d, tag %d from %d\n",
+        my_rank, 
+        temp -> message -> count, *(int*) temp -> message -> data, 
+        temp -> message -> tag, source);
     memcpy(data, temp -> message -> data, count);
             
     before_temp -> next = temp -> next;
