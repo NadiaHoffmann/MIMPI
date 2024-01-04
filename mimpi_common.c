@@ -195,13 +195,7 @@ void destroyMutexes() {
     pthread_cond_destroy(&waiting_for_cond);
 }
 
-void killReaders() {
-    for (int i = 0; i < world_size; i++) {
-        if (!has_finished[i] && i != my_rank) {
-            pthread_cancel(readers[i]);
-        }
-    }
-
+void waitForReaders() {
     for (int i = 0; i < world_size; i++) {
         if (i != my_rank) {
             pthread_join(readers[i], NULL);
@@ -209,20 +203,28 @@ void killReaders() {
     }
 }
 
-void closePointToPointPipes() {
+void closeReadingPointToPointPipes() {
     for (int i = 0; i < world_size; i++) {
         for (int j = 0; j < world_size; j++) {
             if (i != j) {
                 if (i == my_rank) {
                     close((20 * (2 * i + 1)) + j);
                 }
+            }
+        }
+    }
+}
 
+void closeWritingPointToPointPipes() {
+    for (int i = 0; i < world_size; i++) {
+        for (int j = 0; j < world_size; j++) {
+            if (i != j) {
                 if (j == my_rank) {
                     close((40 * (i + 1)) + j);
                 }
             }
         }
-    }
+    }  
 }
 
 void closeGroupPipes() {
@@ -272,7 +274,7 @@ void cleanListsAndVariables() {
         }
 
         free(before);
-
+        // blbl
     }
 }
 
@@ -517,11 +519,10 @@ MIMPI_Retcode Send(const void* data, int count, int destination, int tag)
 }
 
 void createReaders() {
-
     for (int i = 0; i < world_size; i++) {
-        int* j = malloc(sizeof(int));
-        *j = i;
         if (i != my_rank) {
+            int* j = malloc(sizeof(int));
+            *j = i;
             ASSERT_ZERO(pthread_create(&readers[i], NULL, Reader, (void*) j));
         }
     }

@@ -38,10 +38,11 @@ void MIMPI_Init(bool enable_deadlock_detection) {
 }
 
 void MIMPI_Finalize() {
-    killReaders();
-    destroyMutexes();
     closeGroupPipes();
-    closePointToPointPipes();
+    closeWritingPointToPointPipes();
+    waitForReaders();
+    closeReadingPointToPointPipes();
+    destroyMutexes();
     cleanListsAndVariables();
 
     channels_finalize();

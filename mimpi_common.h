@@ -62,9 +62,10 @@ void initListsAndVariables();
 
 /************************ FUNCTIONS FOR FINALIZE ************************/
 void closeGroupPipes();
-void closePointToPointPipes();
+void closeWritingPointToPointPipes();
+void closeReadingPointToPointPipes();
+void waitForReaders();
 void destroyMutexes();
-void killReaders();
 void cleanListsAndVariables();
 
 /************************ POINT TO POINT FUNCTIONS ************************/
