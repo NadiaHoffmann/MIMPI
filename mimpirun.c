@@ -57,17 +57,19 @@ int main(int argc, char **argv) {
         for (int j = 0; j < 2; j++) {
             int me = i + 1;
             int id = j + 1;
-            ASSERT_SYS_OK(channel(forGroups[i][j]));
-            ASSERT_SYS_OK(dup2(forGroups[i][j][0], (700 + 6 * me - 3 + id)));
-            ASSERT_SYS_OK(close(forGroups[i][j][0]));
-            ASSERT_SYS_OK(dup2(forGroups[i][j][1], (700 + 6 * (2 * me + (id - 1)))));
-            ASSERT_SYS_OK(close(forGroups[i][j][1]));
+            if (2 * me + j <= n) {
+                ASSERT_SYS_OK(channel(forGroups[i][j]));
+                ASSERT_SYS_OK(dup2(forGroups[i][j][0], (700 + 6 * me - 3 + id)));
+                ASSERT_SYS_OK(close(forGroups[i][j][0]));
+                ASSERT_SYS_OK(dup2(forGroups[i][j][1], (700 + 6 * (2 * me + (id - 1)))));
+                ASSERT_SYS_OK(close(forGroups[i][j][1]));
 
-            ASSERT_SYS_OK(channel(forGroups[i][j+2]));
-            ASSERT_SYS_OK(dup2(forGroups[i][j+2][0], (700 + 6 * (2 * me + j) - 3)));
-            ASSERT_SYS_OK(close(forGroups[i][j+2][0]));
-            ASSERT_SYS_OK(dup2(forGroups[i][j+2][1], (700 + 6 * me + id)));
-            ASSERT_SYS_OK(close(forGroups[i][j+2][1]));
+                ASSERT_SYS_OK(channel(forGroups[i][j+2]));
+                ASSERT_SYS_OK(dup2(forGroups[i][j+2][0], (700 + 6 * (2 * me + j) - 3)));
+                ASSERT_SYS_OK(close(forGroups[i][j+2][0]));
+                ASSERT_SYS_OK(dup2(forGroups[i][j+2][1], (700 + 6 * me + id)));
+                ASSERT_SYS_OK(close(forGroups[i][j+2][1]));
+            }
         }
     }
 
@@ -109,13 +111,21 @@ int main(int argc, char **argv) {
 
             for (int i = 0; i < n; i++) {
                 int me = i + 1;
-                for(int j = 0; j < 3; j++) {
-                    if (i != 0 || (i == 0 && j != 0)) {
-                        if (i != k) {
-                            ASSERT_SYS_OK(close(700 + 6 * me + j));
-                            ASSERT_SYS_OK(close(700 + 6 * me + j - 3));
-                        }
+                if (i != k) {
+                    if (i != 0) {
+                        ASSERT_SYS_OK(close(700 + 6 * me + 0));
+                        ASSERT_SYS_OK(close(700 + 6 * me + 0 - 3));
                     }
+
+                    if (2 * me <= n) {
+                        ASSERT_SYS_OK(close(700 + 6 * me + 1));
+                        ASSERT_SYS_OK(close(700 + 6 * me + 1 - 3));
+                    }
+
+                    if (2 * me + 1 <= n) {
+                        ASSERT_SYS_OK(close(700 + 6 * me + 2));
+                        ASSERT_SYS_OK(close(700 + 6 * me + 2 - 3));
+                    }   
                 }
             }
 
@@ -146,12 +156,15 @@ int main(int argc, char **argv) {
     }
 
     for (int i = 0; i < n; i++) {
-        int me = i + 1;
-        for (int j = 0; j <= 1; j++) {
-            ASSERT_SYS_OK(close(700 + 6 * me - 3 + j + 1));
-            ASSERT_SYS_OK(close(700 + 6 * (2 * me + j)));
-            ASSERT_SYS_OK(close(700 + 6 * (2 * me + j) - 3));
-            ASSERT_SYS_OK(close(700 + 6 * me + j + 1));
+        for (int j = 0; j < 2; j++) {
+            int me = i + 1;
+            int id = j + 1;
+            if (2 * me + j <= n) {
+                ASSERT_SYS_OK(close(700 + 6 * me - 3 + id));
+                ASSERT_SYS_OK(close(700 + 6 * (2 * me + (id - 1))));
+                ASSERT_SYS_OK(close(700 + 6 * (2 * me + j) - 3));
+                ASSERT_SYS_OK(close(700 + 6 * me + id));
+            }
         }
     }
 

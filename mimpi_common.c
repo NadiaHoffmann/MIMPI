@@ -274,7 +274,6 @@ void cleanListsAndVariables() {
         }
 
         free(before);
-        // blbl
     }
 }
 
