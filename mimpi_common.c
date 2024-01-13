@@ -59,16 +59,17 @@ typedef struct {
 } Reduce_args;
 
 typedef struct {
-    void* data;
     int count;
     int source;
     int tag;
+    void* data;
 } MIMPI_message;
 
 typedef struct element {
     MIMPI_message *message;
     struct element *next;
 } messages_node;
+
 
 /************************ VARIABLES ************************/
 #define BUFFER_SIZE 4096
@@ -294,7 +295,6 @@ static void readerCleanup(int readingFrom) {
 }
 
 // THREADS
-
 static void* Reader(void* _args) {
     int readingFrom = *(int*) _args;
     free(_args);
@@ -417,7 +417,7 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
     if (tag != MIMPI_ANY_TAG) {
         while (temp -> next != NULL && (
             temp -> message == NULL ||
-            (temp -> message -> tag != tag) ||
+            temp -> message -> tag != tag ||
             temp -> message -> count != count
         )) {
             before_temp = temp;
@@ -460,7 +460,7 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
 
-            while (temp -> next == NULL && (
+            while (temp -> next != NULL && (
                 temp -> message == NULL ||
                 temp -> message -> count != count
             )) {
@@ -478,14 +478,13 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
     free(temp);
     
     ASSERT_ZERO(pthread_mutex_unlock(&mutex_list[source]));
-    
+
     return MIMPI_SUCCESS;
 }
 
 // EXTERN FUNCTIONS
 
-MIMPI_Retcode Send(const void* data, int count, int destination, int tag) 
-{
+MIMPI_Retcode Send(const void* data, int count, int destination, int tag) {
     if (tryToPointSend((40 * (destination + 1) + my_rank), 
         &count, sizeof(count)) == -1) {
         return MIMPI_ERROR_REMOTE_FINISHED;
@@ -528,6 +527,49 @@ void createReaders() {
 }
 
 /************************ GROUP FUNCTIONS ************************/
+// SENDER AND RECEIVER
+static MIMPI_Retcode GroupSend(int fd, void* data, int count) {
+    size_t sent_bytes = 0;
+    ssize_t wrote;
+
+    while (sent_bytes < count) {
+        size_t to_send = (count - sent_bytes > BUFFER_SIZE) ? BUFFER_SIZE : 
+            (count - sent_bytes);
+
+        wrote = tryToGroupSend(fd, data + sent_bytes, to_send);
+
+        if (wrote == -1) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
+
+        sent_bytes += wrote; 
+    }
+
+    return MIMPI_SUCCESS;
+}
+
+static MIMPI_Retcode GroupRecv(int fd, void* data, int count) {
+    size_t read_bytes = 0;
+    ssize_t read = 0;
+
+    while (read_bytes < count) {
+        size_t to_read = (count - read_bytes > BUFFER_SIZE) ? BUFFER_SIZE :
+            (count - read_bytes);
+
+        read = tryToGroupReceive(fd, data + read_bytes, to_read);
+
+        if (read == -1) {
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
+
+        read_bytes += read;
+    }
+
+    return MIMPI_SUCCESS;
+}
+
+
+
 // HELPER FUNCTIONS
 
 static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
@@ -663,60 +705,86 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
     int left_child = 2 * me;
     int right_child = 2 * me + 1;
 
+   // printf("%d w bcast\n", my_rank);
+
     if (root == my_rank && me != 1) {
-        if(tryToGroupSend((900 + 4 * me + 2), data, count) == -1) {
+        if(GroupSend((900 + 4 * me + 2), data, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
+           // printf("%d się wyglebał\n", my_rank);
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
-    if (left_child < world_size + 1) {
-        if (tryToGroupReceive((700 + 6 * me + 1 - 3), 
-            to_receive, sizeof(char)) == -1) {
-            free(to_receive);
-            return MIMPI_ERROR_REMOTE_FINISHED;
-        }
-    }
-
-    if (right_child < world_size + 1) {
-        if (tryToGroupReceive((700 + 6 * me + 2 - 3), 
-            to_receive, sizeof(char)) == -1) {
-            free(to_receive);
-            return MIMPI_ERROR_REMOTE_FINISHED;
-        }
-    }
+   // printf("%d za 1\n", my_rank);
 
     if (me == 1 && root != my_rank) {
-        if (tryToGroupReceive((900 + 4 * (root + 1) + 1), data, count) == -1) {
+        if (GroupRecv((900 + 4 * (root + 1) + 1), data, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }   
     }
 
+   // printf("%d za 2\n", my_rank);
+
+    if (left_child < world_size + 1) {
+        if (GroupRecv((700 + 6 * me + 1 - 3), to_receive, sizeof(char)) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
+            free(to_receive);
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
+    }
+
+   // printf("%d za 3\n", my_rank);
+
+    if (right_child < world_size + 1) {
+        if (GroupRecv((700 + 6 * me + 2 - 3), to_receive, sizeof(char)) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
+            free(to_receive);
+            return MIMPI_ERROR_REMOTE_FINISHED;
+        }
+    }
+
+   // printf("%d za 4\n", my_rank);
+
     if (me != 1) {
-        if(tryToGroupSend((700 + 6 * me + 0), &to_send, sizeof(char)) == -1) {
+        if(GroupSend((700 + 6 * me + 0), &to_send, sizeof(char)) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
-        if (tryToGroupReceive((700 + 6 * me + 0 - 3), data, count) == -1) {
+
+       // printf("%d za 5\n", my_rank);
+
+        if (GroupRecv((700 + 6 * me + 0 - 3), data, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
+
+       // printf("%d za 6\n", my_rank);
     }
 
     if (left_child < world_size + 1) {
-        if(tryToGroupSend((700 + 6 * me + 1), data, count) == -1) {
+        if(GroupSend((700 + 6 * me + 1), data, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
 
+   // printf("%d za 7\n", my_rank);
+
     if (right_child < world_size + 1) {
-        if(tryToGroupSend((700 + 6 * me + 2), data, count) == -1) {
+        if(GroupSend((700 + 6 * me + 2), data, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
+
+   // printf("%d za 8\n", my_rank);
 
     free(to_receive);
 
@@ -741,7 +809,8 @@ MIMPI_Retcode Reduce(
     int right_child = 2 * me + 1;
 
     if (left_child < world_size + 1) {
-        if (tryToGroupReceive((700 + 6 * me + 1 - 3), tab1, count) == -1) {
+        if (GroupRecv((700 + 6 * me + 1 - 3), tab1, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             free(tab1);
             free(tab2);
@@ -756,7 +825,8 @@ MIMPI_Retcode Reduce(
     }
 
     if (right_child < world_size + 1) {
-        if (tryToGroupReceive((700 + 6 * me + 2 - 3), tab2, count) == -1) {
+        if (GroupRecv((700 + 6 * me + 2 - 3), tab2, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             free(tab1);
             free(tab2);
@@ -770,7 +840,8 @@ MIMPI_Retcode Reduce(
     }
 
     if (me != 1) {
-        if(tryToGroupSend((700 + 6 * me + 0), res_tab, count) == -1) {
+        if(GroupSend((700 + 6 * me + 0), res_tab, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             free(tab1);
             free(tab2);
@@ -783,8 +854,8 @@ MIMPI_Retcode Reduce(
             }
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
-        if (tryToGroupReceive((700 + 6 * me + 0 - 3), 
-            to_receive, sizeof(char)) == -1) {
+        if (GroupRecv((700 + 6 * me + 0 - 3), 
+            to_receive, sizeof(char)) == MIMPI_ERROR_REMOTE_FINISHED) {
                 free(to_receive);     
             free(tab1);
             free(tab2);
@@ -800,7 +871,8 @@ MIMPI_Retcode Reduce(
     }
 
     if (left_child < world_size + 1) {
-        if(tryToGroupSend((700 + 6 * me + 1), &to_send, sizeof(char)) == -1) {
+        if(GroupSend((700 + 6 * me + 1), &to_send, sizeof(char)) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);     
             free(tab1);
             free(tab2);
@@ -816,7 +888,8 @@ MIMPI_Retcode Reduce(
     }
 
     if (right_child < world_size + 1) {
-        if(tryToGroupSend((700 + 6 * me + 2), &to_send, sizeof(char)) == -1) {
+        if(GroupSend((700 + 6 * me + 2), &to_send, sizeof(char)) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);     
             free(tab1);
             free(tab2);
@@ -832,7 +905,8 @@ MIMPI_Retcode Reduce(
     }
 
     if (me == 1 && my_rank != root) {
-        if(tryToGroupSend((900 + 4 * (root + 1) + 0), res_tab, count) == -1) {
+        if(GroupSend((900 + 4 * (root + 1) + 0), res_tab, count) 
+            == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);     
             free(tab1);
             free(tab2);
@@ -849,7 +923,8 @@ MIMPI_Retcode Reduce(
 
     if (my_rank == root) {
         if (me != 1) {
-            if (tryToGroupReceive((900 + 4 * me + 3), recv_data, count) == -1) {
+            if (GroupRecv((900 + 4 * me + 3), recv_data, count) 
+                == MIMPI_ERROR_REMOTE_FINISHED) {
                 free(to_receive);     
                 free(tab1);
                 free(tab2);

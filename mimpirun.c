@@ -30,8 +30,8 @@ int main(int argc, char **argv) {
     char* path = main_args[2];
     int prog_args = no_args - 1;
     char* args[prog_args];
-    args[0] = (char*) malloc(strlen(basename(path)) + 3);
-    ASSERT_SYS_OK(sprintf(args[0], "./%s", basename(path)));
+    args[0] = (char*) malloc(strlen(path));
+    ASSERT_SYS_OK(sprintf(args[0], path, strlen(path)));
     for (int i = 3; i < no_args; i++) {
         args[i - 2] = main_args[i];
     }
