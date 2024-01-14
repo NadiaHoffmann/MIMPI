@@ -48,10 +48,6 @@ _Noreturn extern void fatal(const char* fmt, ...);
 
 #define TODO fatal("UNIMPLEMENTED function %s", __PRETTY_FUNCTION__);
 
-
-/////////////////////////////////////////////
-// Put your declarations here
-
 /************************ FUNCTIONS FOR INIT ************************/
 void setMyRank(int);
 void setWorldSize(int);

@@ -41,8 +41,6 @@ _Noreturn void fatal(const char* fmt, ...)
     exit(1);
 }
 
-/////////////////////////////////////////////////
-// Put your implementation here
 /************************ STRUCTURES ************************/
 typedef struct {
     void *data;
@@ -599,8 +597,6 @@ static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
         for (int i = 0; i < count; i++) {
             one = *(u_int8_t*) tab1;
             two = *(u_int8_t*) tab2;
-            // u_int8_t one = *(u_int8_t*) tab1;
-            // u_int8_t two = *(u_int8_t*) tab2;
 
             if (one < two) {
                 res_tab[i] = one;
@@ -617,8 +613,6 @@ static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
         for (int i = 0; i < count; i++) {
             one = *(u_int8_t*) tab1;
             two = *(u_int8_t*) tab2;
-            // u_int8_t one = *(u_int8_t*) tab1;
-            // u_int8_t two = *(u_int8_t*) tab2;
 
             res_tab[i] = one * two;
 
@@ -631,8 +625,6 @@ static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
         for (int i = 0; i < count; i++) {
             one = *(u_int8_t*) tab1;
             two = *(u_int8_t*) tab2;
-            // u_int8_t one = *(u_int8_t*) tab1;
-            // u_int8_t two = *(u_int8_t*) tab2;
 
             res_tab[i] = one + two;
 
