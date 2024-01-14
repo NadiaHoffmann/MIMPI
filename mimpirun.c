@@ -28,14 +28,12 @@ int main(int argc, char **argv) {
 
     int n = atoi(main_args[1]);
     char* path = main_args[2];
-    int prog_args = no_args - 1;
-    char* args[prog_args];
-    args[0] = (char*) malloc(strlen(path));
-    ASSERT_SYS_OK(sprintf(args[0], path, strlen(path)));
-    for (int i = 3; i < no_args; i++) {
-        args[i - 2] = main_args[i];
+    int prog_args = no_args - 2;
+    char* args[prog_args + 1];
+    for (int i = 0; i < prog_args; i++) {
+        args[i] = main_args[i + 2];
     }
-    args[prog_args - 1] = NULL;
+    args[prog_args] = NULL;
 
     char* name = (char*) malloc(strlen("MIMPI_n=") + 3);
     ASSERT_SYS_OK(sprintf(name, "MIMPI_n=%d", n));
@@ -199,7 +197,6 @@ int main(int argc, char **argv) {
     free(pid);
     free(name);
     free(temp);
-    free(args[0]);
 
     return 0;
 }
