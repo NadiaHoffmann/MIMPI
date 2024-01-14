@@ -26,9 +26,16 @@ static int world;
 void MIMPI_Init(bool enable_deadlock_detection) {
     channels_init();
 
-    world = MIMPI_World_size();
-    my_no = MIMPI_World_rank();
+    world = atoi(getenv("MIMPI_n"));
+
+    pid_t my_pid = getpid();
+    char* name = (char*) malloc(strlen("MIMPI_") + 20 + 1);
+    ASSERT_SYS_OK(sprintf(name, "MIMPI_%d", my_pid));
+    my_no = atoi(getenv(name));
+    free(name);
+
     deadlock_detection = enable_deadlock_detection;
+    
     setMyRank(my_no);
     setWorldSize(world);
     setDeadlocks(enable_deadlock_detection);
@@ -49,16 +56,11 @@ void MIMPI_Finalize() {
 }
 
 int MIMPI_World_size() {
-    return atoi(getenv("MIMPI_n"));
+    return world;
 }
 
 int MIMPI_World_rank() {
-    pid_t my_pid = getpid();
-    char* name = (char*) malloc(strlen("MIMPI_") + 20 + 1);
-    ASSERT_SYS_OK(sprintf(name, "MIMPI_%d", my_pid));
-    int rank = atoi(getenv(name));
-    free(name);
-    return rank;
+    return my_no;
 }
 
 MIMPI_Retcode MIMPI_Send(

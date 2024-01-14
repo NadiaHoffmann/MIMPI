@@ -430,6 +430,7 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
         ) {
             if (waitForMessage(count, source, tag) 
                 == MIMPI_ERROR_REMOTE_FINISHED) {
+                ASSERT_ZERO(pthread_mutex_unlock(&mutex_list[source]));
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
             
@@ -457,6 +458,7 @@ MIMPI_Retcode Search(void* data, int count, int source, int tag) {
         ) {
             if (waitForMessage(count, source, MIMPI_ANY_TAG) 
                 == MIMPI_ERROR_REMOTE_FINISHED) {
+                ASSERT_ZERO(pthread_mutex_unlock(&mutex_list[source]));
                 return MIMPI_ERROR_REMOTE_FINISHED;
             }
 
@@ -574,13 +576,14 @@ static MIMPI_Retcode GroupRecv(int fd, void* data, int count) {
 
 static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
     u_int8_t* res_tab = malloc(count);
-    switch (op) 
-    {
+    u_int8_t one = *(u_int8_t*) tab1;
+    u_int8_t two = *(u_int8_t*) tab2;
+
+    switch (op) {
     case MIMPI_MAX:
         for (int i = 0; i < count; i++) {
-            u_int8_t one = *(u_int8_t*) tab1;
-            u_int8_t two = *(u_int8_t*) tab2;
-
+            one = *(u_int8_t*) tab1;
+            two = *(u_int8_t*) tab2;
             if (one > two) {
                 res_tab[i] = one;
             }
@@ -594,8 +597,10 @@ static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
     
     case MIMPI_MIN:
         for (int i = 0; i < count; i++) {
-            u_int8_t one = *(u_int8_t*) tab1;
-            u_int8_t two = *(u_int8_t*) tab2;
+            one = *(u_int8_t*) tab1;
+            two = *(u_int8_t*) tab2;
+            // u_int8_t one = *(u_int8_t*) tab1;
+            // u_int8_t two = *(u_int8_t*) tab2;
 
             if (one < two) {
                 res_tab[i] = one;
@@ -610,8 +615,10 @@ static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
 
     case MIMPI_PROD:
         for (int i = 0; i < count; i++) {
-            u_int8_t one = *(u_int8_t*) tab1;
-            u_int8_t two = *(u_int8_t*) tab2;
+            one = *(u_int8_t*) tab1;
+            two = *(u_int8_t*) tab2;
+            // u_int8_t one = *(u_int8_t*) tab1;
+            // u_int8_t two = *(u_int8_t*) tab2;
 
             res_tab[i] = one * two;
 
@@ -622,8 +629,10 @@ static u_int8_t* reducer(void* tab1, const void* tab2, int count, MIMPI_Op op) {
 
     case MIMPI_SUM:
         for (int i = 0; i < count; i++) {
-            u_int8_t one = *(u_int8_t*) tab1;
-            u_int8_t two = *(u_int8_t*) tab2;
+            one = *(u_int8_t*) tab1;
+            two = *(u_int8_t*) tab2;
+            // u_int8_t one = *(u_int8_t*) tab1;
+            // u_int8_t two = *(u_int8_t*) tab2;
 
             res_tab[i] = one + two;
 
@@ -705,18 +714,13 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
     int left_child = 2 * me;
     int right_child = 2 * me + 1;
 
-   // printf("%d w bcast\n", my_rank);
-
     if (root == my_rank && me != 1) {
         if(GroupSend((900 + 4 * me + 2), data, count) 
             == MIMPI_ERROR_REMOTE_FINISHED) {
-           // printf("%d się wyglebał\n", my_rank);
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
-
-   // printf("%d za 1\n", my_rank);
 
     if (me == 1 && root != my_rank) {
         if (GroupRecv((900 + 4 * (root + 1) + 1), data, count) 
@@ -726,8 +730,6 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
         }   
     }
 
-   // printf("%d za 2\n", my_rank);
-
     if (left_child < world_size + 1) {
         if (GroupRecv((700 + 6 * me + 1 - 3), to_receive, sizeof(char)) 
             == MIMPI_ERROR_REMOTE_FINISHED) {
@@ -735,8 +737,6 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
-
-   // printf("%d za 3\n", my_rank);
 
     if (right_child < world_size + 1) {
         if (GroupRecv((700 + 6 * me + 2 - 3), to_receive, sizeof(char)) 
@@ -746,8 +746,6 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
         }
     }
 
-   // printf("%d za 4\n", my_rank);
-
     if (me != 1) {
         if(GroupSend((700 + 6 * me + 0), &to_send, sizeof(char)) 
             == MIMPI_ERROR_REMOTE_FINISHED) {
@@ -755,15 +753,11 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
 
-       // printf("%d za 5\n", my_rank);
-
         if (GroupRecv((700 + 6 * me + 0 - 3), data, count) 
             == MIMPI_ERROR_REMOTE_FINISHED) {
             free(to_receive);
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
-
-       // printf("%d za 6\n", my_rank);
     }
 
     if (left_child < world_size + 1) {
@@ -774,8 +768,6 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
         }
     }
 
-   // printf("%d za 7\n", my_rank);
-
     if (right_child < world_size + 1) {
         if(GroupSend((700 + 6 * me + 2), data, count) 
             == MIMPI_ERROR_REMOTE_FINISHED) {
@@ -783,8 +775,6 @@ MIMPI_Retcode Bcast(void *data, int count, int root) {
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
     }
-
-   // printf("%d za 8\n", my_rank);
 
     free(to_receive);
 
@@ -804,6 +794,7 @@ MIMPI_Retcode Reduce(
     void* tab2 = malloc(count);
     u_int8_t* res_tab;
     u_int8_t* mid_tab;
+    bool same = false;
     int me = my_rank + 1;
     int left_child = 2 * me;
     int right_child = 2 * me + 1;
@@ -837,6 +828,7 @@ MIMPI_Retcode Reduce(
     }
     else {
         res_tab = mid_tab;
+        same = true;
     }
 
     if (me != 1) {
@@ -845,7 +837,7 @@ MIMPI_Retcode Reduce(
             free(to_receive);
             free(tab1);
             free(tab2);
-            if (res_tab == mid_tab) {
+            if (same) {
                 free(res_tab);
             }
             else {
@@ -854,12 +846,13 @@ MIMPI_Retcode Reduce(
             }
             return MIMPI_ERROR_REMOTE_FINISHED;
         }
+
         if (GroupRecv((700 + 6 * me + 0 - 3), 
             to_receive, sizeof(char)) == MIMPI_ERROR_REMOTE_FINISHED) {
                 free(to_receive);     
             free(tab1);
             free(tab2);
-            if (res_tab == mid_tab) {
+            if (same) {
                 free(res_tab);
             }
             else {
@@ -876,7 +869,7 @@ MIMPI_Retcode Reduce(
             free(to_receive);     
             free(tab1);
             free(tab2);
-            if (res_tab == mid_tab) {
+            if (same) {
                 free(res_tab);
             }
             else {
@@ -893,7 +886,7 @@ MIMPI_Retcode Reduce(
             free(to_receive);     
             free(tab1);
             free(tab2);
-            if (res_tab == mid_tab) {
+            if (same) {
                 free(res_tab);
             }
             else {
@@ -910,7 +903,7 @@ MIMPI_Retcode Reduce(
             free(to_receive);     
             free(tab1);
             free(tab2);
-            if (res_tab == mid_tab) {
+            if (same) {
                 free(res_tab);
             }
             else {
@@ -928,7 +921,7 @@ MIMPI_Retcode Reduce(
                 free(to_receive);     
                 free(tab1);
                 free(tab2);
-                if (res_tab == mid_tab) {
+                if (same) {
                     free(res_tab);
                 }
                 else {
@@ -946,7 +939,7 @@ MIMPI_Retcode Reduce(
     free(to_receive);     
     free(tab1);
     free(tab2);
-    if (res_tab == mid_tab) {
+    if (same) {
         free(res_tab);
     }
     else {
