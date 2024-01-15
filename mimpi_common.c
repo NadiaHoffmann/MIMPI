@@ -70,7 +70,7 @@ typedef struct element {
 
 
 /************************ VARIABLES ************************/
-#define BUFFER_SIZE 4096
+#define BUFFER_SIZE 512
 static int my_rank = -1;
 static int world_size = 0;
 static bool deadlocks = false;
